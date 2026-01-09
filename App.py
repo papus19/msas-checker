@@ -1,56 +1,60 @@
+import streamlit as st
 from docx import Document
-from docx.shared import Pt, Mm
+from docx.shared import Mm
 
-def analyser_msas_template(file_path):
-    doc = Document(file_path)
-    rapport = []
+def check_msas_compliance(doc):
+    reports = []
     
-    # 1. Vérification des Marges (Cible: 25mm) 
+    # Vérification des Marges [cite: 23]
     section = doc.sections[0]
-    marge_haut = section.top_margin.mm
-    if round(marge_haut) != 25:
-        rapport.append(f"❌ Marges : La marge supérieure est de {marge_haut:.1f}mm au lieu de 25mm. ")
-    else:
-        rapport.append("✅ Marges : Conformité de 25mm respectée. ")
-
-    # 2. Vérification du Titre (Cible: Times New Roman, 20pt, Gras) [cite: 36, 37, 20]
-    premier_paragraphe = doc.paragraphs[0]
-    titre_texte = premier_paragraphe.text
+    margins = {
+        "Haut": section.top_margin.mm,
+        "Bas": section.bottom_margin.mm,
+        "Gauche": section.left_margin.mm,
+        "Droite": section.right_margin.mm
+    }
+    for name, value in margins.items():
+        if abs(value - 25) > 1:
+            reports.append(f"❌ Marge {name}: {value:.1f}mm détectée. Le guide exige 25mm partout[cite: 23].")
     
-    # Accès au style du premier "run" (segment de texte)
-    if premier_paragraphe.runs:
-        font = premier_paragraphe.runs[0].font
-        taille = font.size.pt if font.size else "Inconnue"
-        is_bold = font.bold
-        
-        if taille != 20:
-            rapport.append(f"❌ Titre : La taille est de {taille}pt au lieu de 20pt. ")
-        if not is_bold:
-            rapport.append("❌ Titre : Le titre doit être en gras. ")
-        if font.name and "Times New Roman" not in font.name:
-            rapport.append(f"❌ Police : Police détectée '{font.name}' au lieu de Times New Roman. ")
+    # Vérification de la police du titre [cite: 8, 36, 37]
+    if doc.paragraphs:
+        first_para = doc.paragraphs[0]
+        if first_para.runs:
+            font = first_para.runs[0].font
+            if font.size and font.size.pt != 20:
+                reports.append(f"❌ Titre: Taille de {font.size.pt}pt détectée au lieu de 20pt[cite: 36].")
+            if not font.bold:
+                reports.append("❌ Titre: Doit être en gras[cite: 8].")
 
-    # 3. Vérification du Corps de Texte (Cible: 10pt) 
-    # On teste un paragraphe au hasard dans l'introduction pour le MVP
+    # Vérification de la casse des sections [cite: 41]
     for para in doc.paragraphs:
-        if "INTRODUCTION" in para.text.upper():
-            intro_idx = doc.paragraphs.index(para)
-            if intro_idx + 1 < len(doc.paragraphs):
-                test_para = doc.paragraphs[intro_idx + 1]
-                if test_para.runs:
-                    f_size = test_para.runs[0].font.size
-                    if f_size and f_size.pt != 10:
-                        rapport.append(f"❌ Corps de texte : Taille de {f_size.pt}pt détectée au lieu de 10pt. ")
-            break
+        # On cible les titres courts en gras (souvent des sections)
+        if para.text.isupper() == False and any(run.bold for run in para.runs) and len(para.text) < 50:
+             if para.text in ["INTRODUCTION", "CONCLUSION", "REFERENCES", "REMERCIEMENTS"]:
+                 continue # Déjà correct
+             else:
+                 reports.append(f"⚠️ Section '{para.text[:20]}...': Les titres de sections doivent être en MAJUSCULES[cite: 41].")
 
-    # 4. Vérification du Format Colonne (Cible: 2 colonnes) [cite: 21]
-    # Note: python-docx lit difficilement le nombre de colonnes complexes, 
-    # mais on peut vérifier si une section spécifique est définie.
-    if len(doc.sections) < 2:
-        rapport.append("⚠️ Mise en page : Assurez-vous d'utiliser deux colonnes après le résumé. [cite: 21]")
+    return reports
 
-    return rapport
+# --- Interface Streamlit ---
+st.set_page_config(page_title="MSAS Compliance Checker", layout="centered")
+st.title("Vérificateur de Template MSAS")
+st.write("Téléchargez votre article pour vérifier sa conformité au format de la conférence.")
 
-# Utilisation
-# resultats = analyser_msas_template("votre_article.docx")
-# for r in resultats: print(r)
+uploaded_file = st.file_uploader("Choisir un fichier .docx", type="docx")
+
+if uploaded_file is not None:
+    doc = Document(uploaded_file)
+    with st.spinner('Analyse en cours...'):
+        errors = check_msas_compliance(doc)
+        
+        if not errors:
+            st.success("Félicitations ! Votre document semble respecter les règles principales du template MSAS.")
+        else:
+            st.subheader("Points à corriger :")
+            for error in errors:
+                st.error(error)
+    
+    st.info("Note : Les articles sont limités à 10 pages maximum[cite: 33].")
